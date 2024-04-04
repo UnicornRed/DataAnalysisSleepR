@@ -1,0 +1,830 @@
+---
+title: "Sleep"
+author: "Oleynik Michael"
+date: "2023-11-20"
+output: html_notebook
+---
+
+## 0. Библиотеки и предварительная подготовка
+
+```{r message=FALSE}
+library(readxl)
+library(dplyr)
+library(scatterPlotMatrix)
+library(kableExtra)
+library(psych)
+library(summarytools)
+library(ggplot2)
+library(GGally)
+library(nortest)
+library(moments)
+library(ppcor)
+library(corrplot)
+library(lm.beta)
+library(ellipse)
+library(car)
+library(olsrr)
+print_df <- function(df)
+{
+  df |>
+    kable(format = "html") |>
+    kable_styling() |>
+    kableExtra::scroll_box(width = "100%", height = "100%")
+}
+
+plot_qq_graph <- function(data, column_name) {
+  data<-data
+  expected_quantiles <- qnorm(ppoints(length(data)))
+  qqnorm(data,  pch = 19, col = "deeppink")
+  qqline(data, distribution = qnorm, lwd = 2, col = "limegreen")
+  legend("topleft", legend = column_name, col = "deeppink", pch = 19)
+}
+
+plot_pp_plot <- function(data, column_name) {
+  n <- length(data)
+  expect_prob <- pnorm(data, mean(data), sqrt(var(data) * (n - 1) / n))
+  expect_prob <- sort(expect_prob)
+  plot(x = expect_prob, y = ppoints(n), col = "red")
+  lines(x = c(0, 1), y = c(0, 1), col = "blue")
+  legend("topleft", legend = column_name, col = "deeppink", pch = 19)
+}
+```
+
+## 1. Загрузка и предобработка данных
+
+```{r}
+df <- read_excel("stat2021_sm/Sleep/SLEEP_shortname.xls", )
+df <- df |> mutate(SLEEP = ifelse(SLEEP < 0, NA, SLEEP), PARADOX = ifelse(is.infinite(PARADOX), NA, PARADOX), PRED_IND = as.factor(PRED_IND), EXP_IND = as.factor(EXP_IND), DANG_IND = as.factor(DANG_IND)) 
+df |> slice(1:10) |> print_df()
+```
+
+## 2. Описание признаков
+
+1. ***NAME*** --- название животного --- **качественный признак**
+2. ***BODY_WEI*** --- вес тела в килограммах --- **количественны непрерывный признак**
+3. ***BRAIN_WE	*** --- вес мозга в граммах --- **количественный непрерывный признак**
+4. ***SLOWWAVE*** --- время медленного сна, часов в день --- **количественный непрерывный признак**
+5. ***PARADOX*** ---время быстрого сна, часов в день  --- **количественный непрерывный признак**
+6. ***SLEEP*** --- общее время сна, часов в день --- **количественный непрерывный признак**
+7. ***LIFESPAN*** --- продолжительность жизни в годах --- **количественный непрерывный признак**
+8. ***GESTTIME*** --- время беременности в днях --- **количественный непрерывный признак**
+9. ***PRED_IND*** --- индекс хищничества (1 --- наименее вероятный объект для охоты, 5 --- наиболее вероятный объект для охоты) --- **порядковый признак**
+10. ***EXP_IND*** --- индекс воздействия во время сна (1 --- наименее подверженный воздействию (например, животное спит в
+хорошо защищенном логове), 5 --- наиболее подверженный воздействию) --- **порядковый признак**
+11. ***DANG_IND*** --- общий индекс опасности (на основе двух вышеуказанных индексов и другой информации) (1 --- наименьшая опасность (от других животных), 5 --- наибольшая опасность (со стороны других животных)) --- **порядковый признак**
+
+## 3. Матричный график разброса
+
+```{r}
+categories <-list(NULL, NULL, NULL, NULL, NULL, NULL, NULL, 1:5, 1:5, 1:5)
+df |> dplyr::select(-NAME) |> scatterPlotMatrix(regressionType = 1,
+                        corrPlotType = "Text",
+                        slidersPosition = list(
+                          dimCount = 7,
+                          xStartingDimIndex = 1,
+                          yStartingDimIndex = 1
+                        ),
+                        categorical = categories,
+                        plotProperties = list(noCatColor = "Indigo"),
+                        controlWidgets = TRUE,
+                        height = 1050, width = 1000)
+```
+
+Видим достаточно логичные кандидаты на логарифмирование: **вес тела**, **вес мозга**, **продолжительность жизни** и **время беременности** --- это мультиплекативные признаки. Также **время быстрого сна** имеет перекос влево, так что лучше его тоже отлогарифмировать, хотя логически, так как **время сна** содержит в себе **время быстрого сна**, этот признак не является мультиплекативным, а также не имеет нелинейную зависимость. Однако, ассиметрия **времи быстрого сна** имеет достаточно большое значение:
+
+```{r}
+desc0 <- df |>dplyr::select(-NAME, -PRED_IND, -EXP_IND, -DANG_IND) |> describe() |>dplyr::select(-trimmed, -mad, -se)
+print_df(desc0)
+```
+
+## 4. Логарифмирование хвостатых
+
+```{r}
+df.log <- df
+df.log <- df.log |> mutate(BODY_WEI = log(BODY_WEI), BRAIN_WE = log(BRAIN_WE), PARADOX = log(PARADOX), LIFESPAN = log(LIFESPAN), GESTTIME = log(GESTTIME))
+df.log <- df.log |> mutate(PARADOX = ifelse(is.infinite(PARADOX), NA, PARADOX))
+df.log |> dplyr::select(-NAME) |> filter(!is.na(SLOWWAVE) & !is.na(PARADOX) & !is.na(SLEEP) & !is.na(LIFESPAN) & !is.na(GESTTIME)) |> scatterPlotMatrix(regressionType = 1,
+                        corrPlotType = "Text",
+                        slidersPosition = list(
+                          dimCount = 7,
+                          xStartingDimIndex = 1,
+                          yStartingDimIndex = 1
+                        ),
+                        categorical = categories,
+                        plotProperties = list(noCatColor = "Indigo"),
+                        controlWidgets = TRUE,
+                        height = 1050, width = 1000)
+```
+
+Выведем также немного другой матричный график, в котором удаление NA будет попарным.
+
+```{r, warning=FALSE}
+df.log |> dplyr::select(-NAME) |> ggpairs(columns = 1:7)
+```
+
+Видим, что распределения стали более симметричными, причём почти все признаки имеют отрицательный эксцесс, то есть они более "плоские", чем нормальное:
+
+```{r}
+desc1 <- df.log |>dplyr::select(-NAME, -PRED_IND, -EXP_IND, -DANG_IND) |> describe() |>dplyr::select(-trimmed, -mad, -se)
+print_df(desc1)
+```
+
+По графику неравномерностей не видно. Если раскрасить по категориальным признакам, то тоже не получается выделить раздельные *облака*.
+
+## 5. Выбросы
+
+Видим пару выбросов, для которых вес мозга мал, но продолжительность жизни достаточно велика:
+
+```{r}
+df.log |> filter(LIFESPAN > 2 & BRAIN_WE < 0) |> print_df()
+```
+
+Это две **летучие мыши**.
+
+Построим теперь графики разброса без выбросов.
+
+```{r}
+df.log.out <- df.log |>  filter(!(LIFESPAN > 2 & BRAIN_WE < 0))
+df.log.out |> dplyr::select(-NAME) |> filter(!is.na(SLOWWAVE) & !is.na(PARADOX) & !is.na(SLEEP) & !is.na(LIFESPAN) & !is.na(GESTTIME)) |> scatterPlotMatrix(regressionType = 1,
+                        corrPlotType = "Text",
+                        slidersPosition = list(
+                          dimCount = 7,
+                          xStartingDimIndex = 1,
+                          yStartingDimIndex = 1
+                        ),
+                        categorical = categories,
+                        plotProperties = list(noCatColor = "Indigo"),
+                        controlWidgets = TRUE,
+                        height = 1050, width = 1000)
+```
+
+И сравним корреляции.
+
+```{r, warning=FALSE}
+df.log |> dplyr::select(-NAME) |> ggpairs(columns = 1:7)
+df.log.out |> dplyr::select(-NAME) |> ggpairs(columns = 1:7)
+```
+
+В основном они **выросли**, по крайней мере, там, где мы исключали выбросы.
+
+## 6. Зависимости от индексов опасности
+
+Необходимо описать разницу между животными по индексу опасности места, где они спят. Посмотрим на количество животных в каждой группе:
+
+```{r}
+df.log.out |>dplyr::select(EXP_IND) |> summary()
+```
+
+Выборки для индексов $2$ и $5$ можем считать сбалансированными.
+
+Визуально оценим распределения с помощью ящиков с усами:
+
+```{r}
+df.log.out |> ggplot(aes(x = EXP_IND, y = BODY_WEI)) +
+  geom_boxplot()
+```
+
+```{r}
+df.log.out |> ggplot(aes(x = EXP_IND, y = BRAIN_WE)) +
+  geom_boxplot()
+```
+
+```{r warning=FALSE}
+df.log.out |> ggplot(aes(x = EXP_IND, y = PARADOX)) +
+  geom_boxplot()
+```
+
+```{r warning=FALSE}
+df.log.out |> ggplot(aes(x = EXP_IND, y = SLOWWAVE)) +
+  geom_boxplot()
+```
+
+```{r}
+df.log.out |> ggplot(aes(x = EXP_IND, y = SLEEP)) +
+  geom_boxplot()
+```
+
+```{r warning=FALSE}
+df.log.out |> ggplot(aes(x = EXP_IND, y = LIFESPAN)) +
+  geom_boxplot()
+```
+
+```{r warning=FALSE}
+df.log.out |> ggplot(aes(x = EXP_IND, y = GESTTIME)) +
+  geom_boxplot()
+```
+
+В основном видна монотонная зависимость, однако, предстоит проверить это с помощью критериев.
+
+## 7. Нормальность, вид распределения
+
+Из-за малости выборок в третьей и четвёртой группах исключим их из исследования.
+
+```{r}
+get_df_on_ind <- function(i) {
+  return(df.log.out |> filter(EXP_IND == i))
+}
+```
+
+Посмотрим сначала на гистограммы распределений по группам для каждого признака.
+
+```{r}
+for (i in c(1, 2, 5)) {
+  print(paste("Группа ", i))
+  par(mfrow = c(2, 4))
+  hist(get_df_on_ind(i)$BODY_WEI, main = "")
+  hist(get_df_on_ind(i)$BRAIN_WE, main = "")
+  hist(get_df_on_ind(i)$SLOWWAVE, main = "")
+  hist(get_df_on_ind(i)$PARADOX, main = "")
+  hist(get_df_on_ind(i)$SLEEP, main = "")
+  hist(get_df_on_ind(i)$LIFESPAN, main = "")
+  hist(get_df_on_ind(i)$GESTTIME, main = "")
+}
+```
+
+Посмотрим на нормальность с помощью Normal Probability Plot:
+
+```{r}
+for (i in c(1, 2, 5)) {
+  print(paste("Группа ", i))
+  par(mfrow = c(2, 4))
+  plot_qq_graph(get_df_on_ind(i)$BODY_WEI, "BODY_WEI")
+  plot_qq_graph(get_df_on_ind(i)$BRAIN_WE, "BRAIN_WE")
+  plot_qq_graph(get_df_on_ind(i)$SLOWWAVE, "SLOWWAVE")
+  plot_qq_graph(get_df_on_ind(i)$PARADOX, "PARADOX")
+  plot_qq_graph(get_df_on_ind(i)$SLEEP, "SLEEP")
+  plot_qq_graph(get_df_on_ind(i)$LIFESPAN, "LIFESPAN")
+  plot_qq_graph(get_df_on_ind(i)$GESTTIME, "GESTTIME")
+}
+```
+
+И с помощью PP-plot:
+
+```{r}
+for (i in c(1, 2, 5)) {
+  print(paste("Группа ", i))
+  par(mfrow = c(2, 4))
+  plot_pp_plot((get_df_on_ind(i) |> filter(!is.na(BODY_WEI)))$BODY_WEI, "BODY_WEI")
+  plot_pp_plot((get_df_on_ind(i) |> filter(!is.na(BRAIN_WE)))$BRAIN_WE, "BRAIN_WE")
+  plot_pp_plot((get_df_on_ind(i) |> filter(!is.na(SLOWWAVE)))$SLOWWAVE, "SLOWWAVE")
+  plot_pp_plot((get_df_on_ind(i) |> filter(!is.na(PARADOX)))$PARADOX, "PARADOX")
+  plot_pp_plot((get_df_on_ind(i) |> filter(!is.na(SLEEP)))$SLEEP, "SLEEP")
+  plot_pp_plot((get_df_on_ind(i) |> filter(!is.na(LIFESPAN)))$LIFESPAN, "LIFESPAN")
+  plot_pp_plot((get_df_on_ind(i) |> filter(!is.na(GESTTIME)))$GESTTIME, "GESTTIME")
+}
+```
+
+А теперь оценим по тесту Шапиро-Уилка:
+
+```{r}
+df.shapiro.test.p.value <- data.frame(ind = c(1, 2, 5), BODY_WEI_P = rep(0, 3), BRAIN_WE_P = rep(0, 3), SLOWWAVE_P = rep(0, 3), PARADOX_P = rep(0, 3), SLEEP_P = rep(0, 3), LIFESPAN_P = rep(0, 3), GESTTIME_P = rep(0, 3))
+
+for (i in c(1, 2, 5)) {
+  df.shapiro.test.p.value[df.shapiro.test.p.value$ind == i, ] <- c(i, shapiro.test(get_df_on_ind(i)$BODY_WEI)$p.value, 
+  shapiro.test(get_df_on_ind(i)$BRAIN_WE)$p.value,
+  shapiro.test(get_df_on_ind(i)$SLOWWAVE)$p.value,
+  shapiro.test(get_df_on_ind(i)$PARADOX)$p.value,
+  shapiro.test(get_df_on_ind(i)$SLEEP)$p.value,
+  shapiro.test(get_df_on_ind(i)$LIFESPAN)$p.value,
+  shapiro.test(get_df_on_ind(i)$GESTTIME)$p.value)
+}
+
+df.shapiro.test.p.value |> print_df()
+```
+
+И наконец по Лиллиефорсу:
+
+```{r}
+df.lillie.test.p.value <- data.frame(ind = c(1, 2, 5), BODY_WEI_P = rep(0, 3), BRAIN_WE_P = rep(0, 3), SLOWWAVE_P = rep(0, 3), PARADOX_P = rep(0, 3), SLEEP_P = rep(0, 3), LIFESPAN_P = rep(0, 3), GESTTIME_P = rep(0, 3))
+
+for (i in c(1, 2, 5)) {
+  df.lillie.test.p.value[df.lillie.test.p.value$ind == i, ] <- c(i, lillie.test(get_df_on_ind(i)$BODY_WEI)$p.value, 
+  lillie.test(get_df_on_ind(i)$BRAIN_WE)$p.value,
+  lillie.test(get_df_on_ind(i)$SLOWWAVE)$p.value,
+  lillie.test(get_df_on_ind(i)$PARADOX)$p.value,
+  lillie.test(get_df_on_ind(i)$SLEEP)$p.value,
+  lillie.test(get_df_on_ind(i)$LIFESPAN)$p.value,
+  lillie.test(get_df_on_ind(i)$GESTTIME)$p.value)
+}
+
+df.lillie.test.p.value |> print_df()
+```
+
+Этот критерий является менее мощным, однако даёт схожие результаты.
+
+По итогу можно считать, что распределения всех признаков во всех группах похожи на нормальные, кроме **веса тела** и **веса мозга** во второй группе и **времени медленного сна**, **времени сна** и **времени беременности** в пятой группе. 
+
+## 8. t-тесты
+
+Сначала посмотрим на дисперсию, чтобы применить t-test для распределений с равными дисперсиями. Тест Фишера проверяет равенство дисперсий для нормально распределённых данных, которые мы определелили в прошлом пункте:
+
+```{r}
+df.fisher.var <- data.frame(IND1 = rep(0, 3), IND2 = rep(0, 3), BODY_WEI_P = rep(0, 3), BRAIN_WE_P = rep(0, 3), SLOWWAVE_P = rep(0, 3), PARADOX_P = rep(0, 3), SLEEP_P = rep(0, 3), LIFESPAN_P = rep(0, 3), GESTTIME_P = rep(0, 3))
+
+k <- 1
+
+for (i in c(1, 2, 5)){
+  for (j in c(1, 2, 5)){
+    if (i < j){
+      df.fisher.var[k, ] <- c(i, j,
+                                  var.test(get_df_on_ind(i)$BODY_WEI, get_df_on_ind(j)$BODY_WEI)$p.value,
+                                  var.test(get_df_on_ind(i)$BRAIN_WE, get_df_on_ind(j)$BRAIN_WE)$p.value,
+                                  var.test(get_df_on_ind(i)$SLOWWAVE, get_df_on_ind(j)$SLOWWAVE)$p.value,
+                                  var.test(get_df_on_ind(i)$PARADOX, get_df_on_ind(j)$PARADOX)$p.value,
+                                  var.test(get_df_on_ind(i)$SLEEP, get_df_on_ind(j)$SLEEP)$p.value,
+                                  var.test(get_df_on_ind(i)$LIFESPAN, get_df_on_ind(j)$LIFESPAN)$p.value,
+                                  var.test(get_df_on_ind(i)$GESTTIME, get_df_on_ind(j)$GESTTIME)$p.value)
+      k <- k + 1
+    }
+  }
+}
+
+df.fisher.var |> print_df()
+```
+
+Гипотеза о равенстве не отвергается для **веса тела** и **веса мозга** между первой и пятой группы, для **времени медленного сна**, **времени сна** и **времени беременности** между первой и второй группы, **времени быстрого сна** между всеми группами и **продолжительности жизни** между первой и второй группой.
+
+Проведём t-тесты для первой, второй и пятой группы по всем признакам:
+
+```{r}
+df.t.test.p.value <- data.frame(IND1 = rep(0, 3), IND2 = rep(0, 3), BODY_WEI_P = rep(0, 3), BRAIN_WE_P = rep(0, 3), SLOWWAVE_P = rep(0, 3), PARADOX_P = rep(0, 3), SLEEP_P = rep(0, 3), LIFESPAN_P = rep(0, 3), GESTTIME_P = rep(0, 3))
+
+k <- 1
+flag <- FALSE
+flagBB <- FALSE
+flagSSG <-FALSE
+flagL <- FALSE
+
+for (i in c(1, 2, 5)){
+  for (j in c(1, 2, 5)){
+    if (i < j){
+        flag <- i == 2 & j == 5
+        flagBB <- i == 1 & j == 5
+        flagSSG <- i == 1 & j == 2
+        flagL <- i == 1 & j == 2
+      
+      df.t.test.p.value[k, ] <- c(i, j,
+                                  t.test(get_df_on_ind(i)$BODY_WEI, get_df_on_ind(j)$BODY_WEI, var.equal = flag | flagBB)$p.value,
+                                  t.test(get_df_on_ind(i)$BRAIN_WE, get_df_on_ind(j)$BRAIN_WE, var.equal = flag | flagBB)$p.value,
+                                  t.test(get_df_on_ind(i)$SLOWWAVE, get_df_on_ind(j)$SLOWWAVE, var.equal = flag | flagSSG)$p.value,
+                                  t.test(get_df_on_ind(i)$PARADOX, get_df_on_ind(j)$PARADOX, var.equal = TRUE)$p.value,
+                                  t.test(get_df_on_ind(i)$SLEEP, get_df_on_ind(j)$SLEEP, var.equal = flag | flagSSG)$p.value,
+                                  t.test(get_df_on_ind(i)$LIFESPAN, get_df_on_ind(j)$LIFESPAN, var.equal = flag | flagL)$p.value,
+                                  t.test(get_df_on_ind(i)$GESTTIME, get_df_on_ind(j)$GESTTIME, var.equal = flag | flagSSG)$p.value)
+      k <- k + 1
+    }
+  }
+}
+
+df.t.test.p.value |> print_df()
+```
+
+Гипотеза о равенстве распределений по всем признакам между первой и второй не отвергается, а между первой и пятой и второй и пятой отвергается. Однако для признаков, которые мы посчитали ненормальными (**вес тела** и **вес мозга** во второй группе и **время медленного сна**, **время сна** и **время беременности** в пятой группе) p-value нельзя считать верным, так как размеры выборок малы и эти признаки не имеют нормального распределения.
+
+## 9. Тест Манна-Уитни
+
+Для проверки равенства распределений для ненормально распределённых признаков можем применить критерий Манна-Уитни, однако прежде посмотрим на симметричност по группам:
+
+```{r}
+df.skew <- data.frame(IND = c(1, 2, 5), BODY_WEI_P = rep(0, 3), BRAIN_WE_P = rep(0, 3), SLOWWAVE_P = rep(0, 3), PARADOX_P = rep(0, 3), SLEEP_P = rep(0, 3), LIFESPAN_P = rep(0, 3), GESTTIME_P = rep(0, 3))
+
+for (i in c(1, 2, 5)){
+  df.skew[df.skew$IND == i, ] <- c(i, skewness(get_df_on_ind(i)$BODY_WEI, na.rm = TRUE),
+                                      skewness(get_df_on_ind(i)$BRAIN_WE, na.rm = TRUE),
+                                      skewness(get_df_on_ind(i)$SLOWWAVE, na.rm = TRUE),
+                                      skewness(get_df_on_ind(i)$PARADOX, na.rm = TRUE),
+                                      skewness(get_df_on_ind(i)$SLEEP, na.rm = TRUE),
+                                      skewness(get_df_on_ind(i)$LIFESPAN, na.rm = TRUE),
+                                      skewness(get_df_on_ind(i)$GESTTIME, na.rm = TRUE))
+}
+
+df.skew |> print_df()
+```
+
+Видим, что асимметрия **веса тела** и **веса мозга** у второй группы (ненормально распределённые признаки) сильно (примерно на порядок) отличается от первой и пятой группы. Аналогично: асимметрия **времени сна** и **времени беременности** пятой группы сильно отличается от первой и пятой. Для асимметрии **времени быстрого сна** у пятой группы и первой также нет оснований говорить о приблизительном равенстве, однако между пятой и второй группой разница мала, меньше $0.5$, что может говорить об удовлетворении условий для критерия, однако надо ещё посмотреть на исправленную выборочную дисперсию:
+
+```{r}
+df.var <- data.frame(IND = c(1, 2, 5), BODY_WEI_P = rep(0, 3), BRAIN_WE_P = rep(0, 3), SLOWWAVE_P = rep(0, 3), PARADOX_P = rep(0, 3), SLEEP_P = rep(0, 3), LIFESPAN_P = rep(0, 3), GESTTIME_P = rep(0, 3))
+
+for (i in c(1, 2, 5)){
+  df.var[df.var$IND == i, ] <- c(i, var(get_df_on_ind(i)$BODY_WEI, na.rm = TRUE),
+                                    var(get_df_on_ind(i)$BRAIN_WE, na.rm = TRUE),
+                                    var(get_df_on_ind(i)$SLOWWAVE, na.rm = TRUE),
+                                    var(get_df_on_ind(i)$PARADOX, na.rm = TRUE),
+                                    var(get_df_on_ind(i)$SLEEP, na.rm = TRUE),
+                                    var(get_df_on_ind(i)$LIFESPAN, na.rm = TRUE),
+                                    var(get_df_on_ind(i)$GESTTIME, na.rm = TRUE))
+}
+
+df.var |> print_df()
+```
+
+Видим, что дисперсии **времени медленного сна** для пятой и второй группы даже приблизительно не равны, поэтому ни один из признаков, которые мы хотели проверить не подходят для применения критерия Манна-Уитни. То есть для них мы ничего не можем сказать о равенстве распределений.
+
+## 10. Коэффициент Пирсона
+
+```{r}
+pairwise.cor <- function(data, name_method = "pearson"){
+  m <- cor(data)
+  m.p.value <- cor(data)
+  
+  for (i in colnames(data)){
+    for (j in colnames(data)){
+      data.out <- data|> filter(!is.na(data[[i]]) & !is.na(data[[j]]))
+      m[i, j] <- cor(x = data.out[[i]], y = data.out[[j]], method = name_method)
+      m.p.value[i, j] <- cor.test(x = as.vector(data.out[[i]]), y = as.vector(data.out[[j]]), method = name_method)$p.value
+    }
+  }
+  
+  corrplot(m, method = "number")
+  as.data.frame(m.p.value)
+}
+```
+
+Перед вычислением коэффициента корреляции Пирсона посмотрим на нормальность признаков для всех индивидов по тесту Шапиро-Уилка:
+
+```{r}
+df.shapiro.test.all.p.value <- data.frame(BODY_WEI_P = 0, BRAIN_WE_P = 0, SLOWWAVE_P = 0, PARADOX_P = 0, SLEEP_P = 0, LIFESPAN_P = 0, GESTTIME_P = 0)
+
+for (i in c(1)) {
+  df.shapiro.test.all.p.value[1, ] <- c(shapiro.test(df.log.out$BODY_WEI)$p.value, 
+  shapiro.test(df.log.out$BRAIN_WE)$p.value,
+  shapiro.test(df.log.out$SLOWWAVE)$p.value,
+  shapiro.test(df.log.out$PARADOX)$p.value,
+  shapiro.test(df.log.out$SLEEP)$p.value,
+  shapiro.test(df.log.out$LIFESPAN)$p.value,
+  shapiro.test(df.log.out$GESTTIME)$p.value)
+}
+
+df.shapiro.test.all.p.value |> print_df()
+```
+
+Как видим по p-value можем считать, что распределения похожи на нормальные, поэтому критерий проверки на значимость коэффициента корреляции будет проверять ещё и независимость признаков, а также коэффициент Спирмена будет примерно равен коэффициенту Пирсона.
+
+Теперь посчитаем коэффициенты корреляции Пирсона для всех пар признаков, причём удаление NA будем производить попарно, чтобы для каждой пары получить максимальное количество индивидов:
+
+```{r}
+df.log.out |> 
+  mutate(BRAIN_BODY = log(exp(BRAIN_WE) / exp(BODY_WEI))) |>
+  dplyr::select(-NAME, -EXP_IND, -PRED_IND, -DANG_IND) |> 
+  pairwise.cor() |> 
+  print_df()
+```
+
+Видим, что для всех пар признаков критерий даёт p-value меньше $\alpha = 0.05$, то есть отвергаем гипотезу о незначимости зависимсоти для этих признаков.
+
+Зависимости:
+
+1. **Вес мозга** зависит от **веса тела**;
+
+2. **Общая продолжительность сна** зависит от **медленного** и **быстрого сна**, а также они зависят друг от друга, но скорее косвенно, так как это соотношение скорее индивидуально для каждого животного;
+
+3. **Время беременности** зависит от **продолжительности жизни**, так как беременность не должна занимать большей части жизни из-за уязвимости такого животного;
+
+4. Чем больше животное, тем дольше **беременность** и **продолжительность жизни**, так как крупное животное требует как большого формирования во время беременности, так как и большего времени взросления;
+
+5. Также от размера **мозга** зависит **продолжительность жизни**, однако эта зависимость не является прямой, так как если мы рассмотрим долю **веса мозга** к **весу тела**, то корреляция значительно упадёт;
+
+6. Зависимости между **сном** и **весом тела**, **сном** и **продолжительностью жизни** или **сном** и **времени беременности** достаточно сложно объяснить, для этого нужно углублятся в сложные биологичесике процессы.
+
+## 11. Коэффициент Спирмена
+
+Проверим, что ранговый коэффициент корреляции Спирмена примерно равен Пирсону:
+
+```{r warning=FALSE}
+df.log.out |> 
+ dplyr::select(-NAME, -EXP_IND, -PRED_IND, -DANG_IND) |> 
+  pairwise.cor(name_method = "spearman") |> 
+  print_df()
+```
+
+Результаты схожи и это не удивительно, ведь мы считаем, что данные похожи на нормальные, а для них отличие коэффициента Пирсона от Спирмена незначительно.
+
+## 12. Частные корреляционные отношения
+
+Однако возникает подозрение, что многие зависимости имеют другую причину, нежели зависимость только друг от друга. Как было видно по ящикам с усами для **индекса опасности места для сна** есть монотонная зависимость почти всех признаков от этого индекса. Поэтому возникает идея проверки коэффициента частной корреляции с вычетом влияния этого индекса.
+
+```{r}
+df.log.out |> 
+  group_by(EXP_IND) |> 
+  mutate(BODY_WEI = BODY_WEI - mean(BODY_WEI, na.rm = TRUE), BRAIN_WE = BRAIN_WE - mean(BRAIN_WE, na.rm = TRUE), SLOWWAVE = SLOWWAVE - mean(SLOWWAVE, na.rm = TRUE), PARADOX = PARADOX - mean(PARADOX, na.rm = TRUE), SLEEP = SLEEP - mean(SLEEP, na.rm = TRUE), LIFESPAN = LIFESPAN - mean(LIFESPAN, na.rm = TRUE), GESTTIME = GESTTIME - mean(GESTTIME, na.rm = TRUE)) |>
+  group_by(.drop = TRUE) |> dplyr::select(-NAME, -EXP_IND, -PRED_IND, -DANG_IND) |> 
+  pairwise.cor() |> 
+  print_df()
+```
+
+Здесь мы видим, что достаточно много зависимостей перестали быть значимыми ($\alpha = 0.05$), так как мы исключили влияние **индекса опасности места для сна**. Ожидаемо зависимости всех видов **сна** от **веса тела**, **веса мозга** и **продолжительности сна** значительно ослабли, однако зависимости сна от **времени беременности** уменьшились мало.
+
+## 13. Множественная регрессия
+
+Посмотрим на данные:
+
+```{r warning=FALSE}
+df.log.out |> dplyr::select(-NAME) |> ggpairs(columns = 1:7)
+```
+
+Всё, что нужно, было прологарифмировано раньше, поэтому приступим к регрессии. Хотим прогнозировать время жизни по остальным данным.
+
+Строим регрессию по всем признакам:
+
+```{r}
+df.log.out.na <- df.log.out |> dplyr::filter(!is.na(SLOWWAVE) & !is.na(PARADOX) & !is.na(SLEEP) & !is.na(LIFESPAN) & !is.na(GESTTIME))
+model <- lm(LIFESPAN ~ ., df.log.out.na |> dplyr::select(-NAME))
+model.beta <- lm.beta(model)
+summary(model.beta)
+```
+
+Регрессия значима, но значимых коэффициентов на уровне $\alpha = 0.05$ только два: для **веса мозга** и для фиктивной переменной **индекса хищничества** при значении $3$.
+
+## 14. Доверительные эллипсы
+
+Посчитаем ковариационную и корреляционную матрицу для коэффициентов регрессии:
+
+```{r}
+dummy.variable <- data.frame(NAME = df.log.out.na$NAME)
+
+for (i in 2:5){
+  dummy.variable[[paste("PRED_IND", i, sep = "_")]] = ifelse(df.log.out.na$PRED_IND == i, 1, 0)
+}
+for (i in 2:5){
+  dummy.variable[[paste("EXP_IND", i, sep = "_")]] = ifelse(df.log.out.na$EXP_IND == i, 1, 0)
+}
+for (i in 2:5){
+  dummy.variable[[paste("DANG_IND", i, sep = "_")]] = ifelse(df.log.out.na$DANG_IND == i, 1, 0)
+}
+
+n.df <- length(df.log.out.na$NAME)
+sigma.df <- sum(model$residuals ** 2) / (n.df - model$rank)
+covMatrix.df <- df.log.out.na |> dplyr::select(-NAME, -PRED_IND, -EXP_IND, -DANG_IND) |> cbind(dummy.variable |> dplyr::select(-NAME)) |> cov()
+cov_b.df <- sigma.df / n.df * solve(covMatrix.df)
+cov_beta.df <- sigma.df / n.df * solve(cov2cor(covMatrix.df))
+cor_b.df <- cov2cor(cov_b.df)
+corrplot(cor_b.df, method = "color")
+```
+
+Видим сильную корреляцию между между оценками коэффициентов регрессии между **весом тела** и **мозга**, между всеми видами **сна**, между **индексами общей опасности** и **хищничества**, а также между **весом мозга** и **продолжительностью жизни**.
+
+Посмотрим на доверительный эллипсоид для значимых коэффициентов, обозначенных выше:
+
+```{r}
+plot(ellipse::ellipse(cov_beta.df[c(2, 9), c(2, 9)], centre = model.beta$standardized.coefficients[c(3, 9)], level=0.95, npoints = 100), type = "l", asp = 1)
+lines(x = c(-2, 2), y = c(2, -2), col = "red")
+```
+
+Он имеет плохой вид: либо оба имеет сильное влияние, либо оба --- слабое. Причём **индекс хищничества** может быть совсем не значим, так как эллипс пересекает нулевое значение по $y$.
+
+## 15. Сильно коррелирующие признаки
+
+Построим таблицу VIF:
+
+```{r}
+ols_vif_tol(model)
+```
+
+Наблюдаем очень большую мультиколлинеарность почти по всем признакам.
+
+Теперь таблица с частичными корреляциями:
+
+```{r}
+ols_correlations(model)
+```
+
+Сильное влияние на зависимую переменную за исключением остальных оказывают, в перую очередь, **вес мозга**, а также **индекс хищничества** и **общий индекс опасности** (хотя он сильно зависит от **индекса хищничества**).
+
+Попробуем убрать сильно коррелирующие. Уберём **вес тела**, **общее время сна** и **общий индекс опасности**:
+
+```{r}
+model.minuscor <- lm(LIFESPAN ~ ., df.log.out.na |> dplyr::select(-NAME, -BODY_WEI, - SLEEP, -DANG_IND))
+model.minuscor.beta <- lm.beta(model.minuscor)
+summary(model.minuscor.beta)
+```
+По значимости имеем ту же ситуацию, однако значимость по p-value подросла, а $R^2$ почти не изменился.
+
+Мультиколлинеарность исчезла:
+
+```{r}
+ols_vif_tol(model.minuscor)
+```
+
+## 16. Пошаговая регрессия
+
+### Backward
+
+Построим пошаговую регрессию. Сначала рассмотрим убавление количества параметров:
+
+```{r}
+st.bw.lm <- ols_step_backward_p(model.minuscor)
+st.bw.lm
+```
+
+Как это выглядит по шагам:
+
+```{r}
+plot(st.bw.lm)
+```
+
+Какая же модель получается в итоге:
+
+```{r}
+summary(st.bw.lm$model)
+```
+
+Осталось $2$ признака, удалились **время беременности**, **быстрый сон**, **медленный сон** и **индекс воздействия сна**. 
+
+### Forward
+
+Теперь будем добавлять признаки:
+
+```{r}
+st.fw.lm <- ols_step_forward_p(model.minuscor)
+st.fw.lm
+```
+
+Как это выглядело на графике:
+
+```{r}
+plot(st.fw.lm)
+```
+
+Какую же модель получили:
+
+```{r}
+summary(st.fw.lm$model)
+```
+
+Она аналогична той, которую получили от backward.
+
+Однако только при одном значении **индекса хищничества** коэффициент значимый, поэтому вручную создадим фиктивные переменные и проведём опять автоматический отбор:
+
+```{r}
+df.log.out.dummy <- df.log.out.na
+for (i in 2:5){
+  df.log.out.dummy[[paste("PRED_IND", i, sep = "_")]] <- ifelse(df.log.out.dummy$PRED_IND == i, 1, 0)
+}
+model.out.dummy <- lm(LIFESPAN ~ BRAIN_WE + PRED_IND_2 + PRED_IND_3 + PRED_IND_4 + PRED_IND_5, data = df.log.out.dummy)
+st.bw.lm.dummy <- ols_step_backward_p(model.out.dummy)
+plot(st.bw.lm.dummy)
+summary(st.bw.lm.dummy$model)
+```
+
+Осталось два значения **индекса хищничества**.
+
+## 17. Остатки и Predicted vs Residuals
+
+Нашли лучшую модель регрессии. Добавим те наблюдения, которые имели пропущенные значения только на убранных данных:
+
+```{r}
+df.log.na.best <- df.log |> filter(!is.na(LIFESPAN))
+for (i in 2:5){
+  df.log.na.best[[paste("PRED_IND", i, sep = "_")]] <- ifelse(df.log.na.best$PRED_IND == i, 1, 0)
+}
+model.best <- lm(LIFESPAN ~ BRAIN_WE + PRED_IND_2 + PRED_IND_3, data = df.log.na.best)
+model.beta.best <- lm.beta(model.best)
+summary(model.beta.best)
+```
+
+Ясно, что согласованность модели упала, так как мы построили её на большем наборе данных (плюс были добавлены выбросы, удаленные раньше).
+
+Теперь посмотрим на нормальность остатков (хотим точность проверяемых критериев):
+
+```{r}
+plot(model.best, which=2)
+```
+
+Видим, что справа нормальности не наблюдается, хотя на основном массиве данных нормальность присутствует.
+
+Теперь посмотрим на график Predicted vs Residuals:
+
+```{r}
+plot(model.best,which=1)
+```
+
+Видим достаточно равномерное распределение в прямоугольной области около нуля. То есть можно предположить адекватность выбранной линейной модели, а также гомогедостичность (то есть равенство дисперсий остатков).
+
+График Residuls vs Deleted Residuals:
+
+```{r}
+del_res <- sapply(1:58, function(n) df.log.na.best$LIFESPAN[n] - predict(lm(LIFESPAN ~ BRAIN_WE + PRED_IND_2 + PRED_IND_3, data = df.log.na.best[-n, ]), df.log.na.best[n, ]))
+plot(x = model.best$residuals, y = del_res, xlab = "Rsiduals", ylab = "Deleted residuals")
+lines(x = c(-3, 3), y = c(-3, 3))
+abline(lm(del_res ~ model.best$residuals), col = "blue")
+text(x = model.best$residuals, y = del_res, labels = rownames(df.log.na.best), cex = 0.6, pos = 4, col = "red")
+```
+
+Как и ожидалось, точки расположились под чуть большим наклоном, нежели $y = x$. Больших отклонений (по линии регресии на этих точках) не видно, то есть сказать что-то о выбросах нельзя.
+
+## 18. Выбросы по Махаланобису
+
+```{r}
+df.log.na.best.x <- df.log.na.best |> dplyr::select(BRAIN_WE, PRED_IND_2, PRED_IND_3)
+
+cov_matrix <- cov(df.log.na.best.x)
+
+mahalanobis_distance <- mahalanobis(df.log.na.best.x, center = colMeans(df.log.na.best.x), cov = cov_matrix)
+
+plot(mahalanobis_distance, 
+     main = "Mahalanobis Distance Plot",
+     xlab = "Observation",
+     ylab = "Mahalanobis Distance",
+     type = "h", 
+     col = "darkblue") 
+plot(sort(mahalanobis_distance), 
+     main = "Mahalanobis Distance Plot",
+     xlab = "Observation",
+     ylab = "Mahalanobis Distance",
+     type = "h", 
+     col = "darkblue") 
+```
+
+По Махаланобису виден скачок для двух наблюдений: $1$ и $4$. Это два слона:
+
+```{r}
+df.log.na.best[c(1, 4), ] |> print_df()
+```
+
+## 19. Выбросы по Куку
+
+```{r}
+cooks_distance <- cooks.distance(model.best)
+
+plot(cooks_distance, 
+     col = "darkblue",
+     type = "h", 
+     main = "Cook's Distance",
+     xlab = "Observation",
+     ylab = "Cook's Distance")
+plot(sort(cooks_distance), 
+     col = "darkblue",
+     type = "h", 
+     main = "Cook's Distance",
+     xlab = "Observation",
+     ylab = "Cook's Distance")
+```
+
+По скачку значения расстояния Кука можно выделить три наблюдения: 6, 14 и 31. Это те самые летучие мыши и ещё ехидна:
+
+```{r}
+df.log.na.best[c(6, 14, 31), ] |> print_df()
+```
+
+## 20. Studentized Residuals vs Leverage Plot
+
+Наконец посмотрим на соотношение рычага и остатков:
+
+```{r}
+ols_plot_resid_lev(model.best)
+```
+
+Здесь явных выбросов нет: по остаткам, за пределами доверительного интервала небольшое количество наблюдений, по рычагу два кандидата на выбросы --- слоны, а наблюдений, которые бы были и по рычагу и по остаткам "выбросами", нет.
+
+## 21. Исключаем выбросы
+
+Найденные выбросы имеют определённый смысл --- большие и средне атакуемые слоны, маленькие, но долгоживущие летучие мыши и такая же ехидна. Слонов исключать не будем, так как они просто большие, поэтому Махаланобис их выделяет, однако они хорошо согласуются с моделью (видно по картинке, например). Исключим выбросы:
+
+```{r}
+model.best.out <- lm(LIFESPAN ~ BRAIN_WE + PRED_IND_2 + PRED_IND_3, data = df.log.na.best[c(-6, -14, -31),])
+model.best.out.beta <- lm.beta(model.best.out)
+summary(model.best.out.beta)
+```
+
+Судя по $R^2$ и его исправленному варианту, а также по p-value значимости регрессии, получили более хорошую модель.
+
+## 22. Предсказания
+
+Предскажем **время жизни**обыкновенного ежа. **Вес его мозга** --- $3.3$ г, имеет защиту от хищников, но крупные хищные птицы успешно их атакуют, поэтому **индекс хищничества** --- примерно $3$. В неволе ежи живут $4$-$6$ лет. Пусть будет $5$:
+
+```{r}
+data.hedgehog <- data.frame(NAME = "European hedgehog", BRAIN_WE = log(3.3), LIFESPAN = log(5), PRED_IND_2 = 0, PRED_IND_3 = 1)
+data.hedgehog |> print_df()
+```
+
+Предскажем его продолжительность жизни:
+
+```{r}
+pred.hedgehog.pred <- predict(model.best.out, newdata = data.hedgehog, interval = "predict")
+pred.hedgehog.conf <- predict(model.best.out, newdata = data.hedgehog, interval = "confidence")
+```
+
+```{r}
+exp(pred.hedgehog.pred[, 1])
+```
+
+Получили цифры близкие к действительности. Посмотрим на предсказательный интервал:
+
+```{r}
+print("Нижняя граница:")
+exp(pred.hedgehog.pred[, 2])
+print("Верхняя граница:")
+exp(pred.hedgehog.pred[, 3])
+```
+
+Ежи в неволе могут жить до 10 лет.
+
+А теперь на доверительный:
+
+```{r}
+print("Нижняя граница:")
+exp(pred.hedgehog.conf[, 2])
+print("Верхняя граница:")
+exp(pred.hedgehog.conf[, 3])
+```
